@@ -1,0 +1,730 @@
+1
+client.c
+#include <stdio.h>
+#include <unistd.h>
+
+int main(int argc,char* argv[])
+{
+	FILE *fp;
+	fp = fopen("channel","w");
+	fputs(argv[1],fp);
+	fclose(fp);
+}
+1
+server.c
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+
+#define MAX 128
+
+int main()
+{
+	FILE *fp;
+	char buffer[MAX];
+
+	mknod("channel",S_IFIFO|0777,0);
+
+	while(1)
+	{
+		fp = fopen("channel","r");
+		fgets(buffer,MAX,fp);
+		printf("Message Received : %s\n",buffer);
+		fclose(fp);
+	}
+	return 0;
+}
+
+2
+client.c
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <string.h>
+#include <fcntl.h>
+
+#define MAX 80
+
+int main(int argc,char* argv[])
+{
+	char buffer[MAX];
+	int in,out;
+	int n;
+
+	in = open("server_to_client",O_RDWR,0777);
+	out = open("client_to_server",O_RDWR,0777);
+
+	printf("Sending Message\n");
+	n = strlen(argv[1]);
+	write(out,argv[1],n);
+
+	read(in,buffer,MAX);
+	printf("Message Received : %s\n",buffer);
+	
+	close(in);
+	close(out);
+}
+2
+server.c
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <fcntl.h>
+#include <string.h>
+
+#define MAX 80
+
+int main()
+{
+	char buffer[MAX];
+	int in,out,n;
+	mkfifo("server_to_client",0777);
+	mkfifo("client_to_server",0777);
+
+	while(1)
+	{
+		in = open("client_to_server",O_RDWR,0777);
+		out = open("server_to_client",O_RDWR,0777);
+
+		memset(buffer,0,MAX);
+		printf("Waiting for Message\n");
+		n = read(in,buffer,MAX);
+		printf("Message : %s\n",buffer);
+		buffer[0] = toupper(buffer[0]);
+		printf("Sending Reply\n");
+		write(out,buffer,n);
+
+		close(in);
+		close(out);
+	}
+
+	return 0;
+}
+3
+client.c
+#include <stdio.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
+#include <string.h>
+#define SIZE 128
+
+typedef struct msgbuf
+{
+	long mtype ;
+	char mtext[SIZE];
+}msgbuf;
+
+int main(int argc,char* argv[])
+{
+	int msgid ;
+	key_t key;
+	struct msgbuf buffer;
+
+	key = 1234;
+
+	msgid = msgget(key,0777);
+
+	buffer.mtype = 1;
+	strcpy(buffer.mtext,argv[1]);
+
+	msgsnd(msgid,&buffer,strlen(argv[1]),IPC_NOWAIT);
+
+}
+
+3
+server.c
+#include <stdio.h>
+#include <sys/ipc.h>
+#include <sys/types.h>
+#include <sys/msg.h>
+#include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+#define SIZE 128
+
+typedef struct msgbuf
+{
+	long mtype; //message type
+	char mtext[SIZE]; //message
+}msgbuf;
+
+int main(int argc,char* argv[])
+{
+	int msgid ; 
+	key_t key;
+	int n , fd;
+	msgbuf buffer;
+	char text[SIZE];
+
+	key = 1234;
+
+	msgid = msgget(key,IPC_CREAT|0777);
+
+	buffer.mtype = 1;
+
+	msgrcv(msgid,&buffer,SIZE,1,0);
+
+	fd = open(buffer.mtext,O_RDWR,0777);
+	
+	n = read(fd,text,SIZE);
+	write(STDOUT_FILENO,text,n);
+}
+
+4
+4a.c
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+
+#define MAX 24
+
+int main()
+{
+	int n;
+	int a,b;
+	char buffer[MAX];
+
+	while(n=read(STDIN_FILENO,buffer,MAX))
+	{
+		buffer[n] = 0;
+		sscanf(buffer,"%d%d",&a,&b);
+		sprintf(buffer,"%d",a+b);
+		n = strlen(buffer);
+		write(STDOUT_FILENO,buffer,n);
+		printf("\n");
+	}
+	return 0;
+}
+
+5
+5b.c
+#include <stdio.h>
+#include <unistd.h>
+#include <signal.h>
+
+struct sigaction sig;
+
+void handler(int val)
+{
+	printf("Interrupt Received!\n");
+	sig.sa_handler = SIG_DFL;
+	sigaction(SIGINT,&sig,0);
+}
+int main()
+{
+	sig.sa_flags = 0;
+	sigemptyset(&sig.sa_mask);
+	sigaddset(&sig.sa_mask,SIGINT); // listen only for SIGNIT
+	sig.sa_handler = handler;
+
+	sigaction(SIGINT,&sig,0);
+
+	while(1)
+	{
+		printf("Progress is Happiness!\n");
+		sleep(1);
+	}
+}
+6
+6b.c
+
+/*
+    compile using gcc 11b.c -lpthread
+
+    ignore warnings
+*/
+
+
+#include <stdio.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <unistd.h>
+
+#define NUM_WRITERS 3
+#define NUM_READERS 3
+
+int item_written = 0;
+int item_read = 0;
+
+sem_t semaphore_writer;
+sem_t semaphore_reader;
+sem_t semaphore_item;
+
+void writer(int count)
+{
+  sleep(1);
+  printf("Locking Writer %d \n",count);
+  sem_wait(&semaphore_writer);
+  item_written ++;
+  sem_post(&semaphore_item); // unlock item so it can be read if it was locked when no new item was available
+  if(item_written == 1)
+    sem_post(&semaphore_reader); // unlock reader locked when attempting to read NULL item
+  printf("Writing to new value %d\n",item_written);
+  printf("Writer %d unlocking semaphore\n",count);
+  sem_post(&semaphore_writer);
+}
+
+void reader(int count)
+{
+  sleep(1);
+  if(item_written == 0)
+  {
+    printf("Locking Reader %d since no item has been written yet! \n",count);
+    sem_wait(&semaphore_reader); // no item has been written yet
+  }
+  if(item_read == item_written)
+  {
+    printf("No new item available to be read . Locking resource until new entry is written !\n");
+    sem_wait(&semaphore_item); // wait for new item to be written
+  }
+  item_read++;
+  printf("Reader %d read value : %d \n",count,item_read);
+}
+
+void *begin_reader(void *arg)
+{
+  while(1)
+  {
+    reader((int) arg);
+  }
+}
+
+void *begin_writer(void *arg)
+{
+  while(1)
+  {
+    writer((int) arg);
+  }
+}
+
+int main()
+{
+  int i; //loop variable
+  // initializing readers and writers
+  pthread_t reader_th[NUM_READERS];
+  pthread_t writer_th[NUM_WRITERS];
+
+  sem_init(&semaphore_item,0,1);
+  sem_init(&semaphore_reader,0,1);
+  sem_init(&semaphore_writer,0,1);
+
+  //creating readers and writers
+  for(i=0;i<NUM_WRITERS;i++)
+    pthread_create(&writer_th[i],NULL,begin_writer,(void *)i);
+
+  for(i=0;i<NUM_READERS;i++)
+    pthread_create(&reader_th[i],NULL,begin_reader,(void *)i);
+
+  //join thread
+  for(i=0;i<NUM_READERS;i++)
+    pthread_join(reader_th[i],NULL);
+
+  for(i=0;i<NUM_WRITERS;i++)
+    pthread_join(writer_th[i],NULL);
+
+  return 0;
+}
+7
+7a.c
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <pwd.h>
+
+int main( int argc, char* argv[])
+{
+	struct passwd *pw;
+	if(pw = getpwnam(argv[1]))
+	{
+		printf("Login Name : %s\n",pw->pw_name);
+		printf("Shell : %s\n", pw->pw_shell);
+		printf("UID : %d\n", pw->pw_uid);
+		printf("GID : %d\n", pw->pw_gid);
+	}
+	else
+	{
+		printf("User %s does not exist\n",argv[1]);
+	}
+}
+
+8
+client.c
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+
+#define SIZE 128
+
+int main()
+{
+	key_t key;
+	char *shm , *buffer;
+	int shmid, n;
+
+	key = 1234; // same random number used to create the shm
+	shmid = shmget(key,SIZE,0777);
+	shm = shmat(shmid,NULL,0);
+
+	for(buffer = shm; *buffer != 0; buffer++)
+	{
+		printf("%c\n",*buffer);
+	}
+
+	*shm = '*'; // tell the server the data has been read
+
+	return 0;
+
+}
+8
+server.c
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/shm.h>
+#include <sys/ipc.h>
+#include <string.h>
+
+#define SIZE 128
+
+int main()
+{
+	key_t key;
+	char *shm ;
+	char *buffer = "abcdefghijklmnopqrstuvxyz0";
+	int shmid,n;
+
+
+	key = 1234; // any random number 
+	shmid = shmget(key,SIZE,IPC_CREAT|0777); //create a shared memory segment
+	shm = shmat(shmid,NULL,0); //attach it to the calling process
+
+	n = strlen(buffer);
+	memcpy(shm,buffer,n);
+
+	while(*shm != '*') // wait for client to write * into shm
+		sleep(1); 
+
+	return 0;
+}
+9
+8a.c
+#include <stdio.h>
+#include <setjmp.h>
+
+jmp_buf jmp;
+
+int divide(int a,int b)
+{
+	if (b == 0)
+	{
+		longjmp(jmp,1);
+	}
+	else
+		return a/b;
+}
+
+int main(int argc,char* argv[])
+{
+	int ans;
+	int a = atoi(argv[1]);
+	int b = atoi(argv[2]);
+
+	if(setjmp(jmp) == 0)
+	{
+		ans = divide(a,b);
+		printf("Quotient : %d\n",ans);
+	}
+	else
+	{
+		printf("Divide by Zero Exception Caught!\n");
+
+	}
+	return 0;
+}
+10
+8b.c
+#include <stdio.h>
+#include <unistd.h>
+#include <signal.h>
+
+void handler()
+{
+	printf("PID calling handler : %d\n",getpid());
+}
+
+int main()
+{
+	pid_t pid = fork();
+	signal(SIGALRM,handler);
+	alarm(5);
+
+	if(pid)
+	{
+		printf("PID of Parent : %d\n",getpid());
+		sleep(10);
+	}
+	else if(!pid)
+	{
+		printf("PID of child : %d\n", getpid());
+		sleep(10);
+	}
+}
+11
+display.c
+#include <stdio.h>
+#include <unistd.h>
+
+int main(int argc,char* argv[])
+{
+	int i;
+	for(i=0;i<argc;i++)
+	{
+		printf("%s\n",argv[i]);
+	}
+	return 0;
+}
+11
+driver.c
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <fcntl.h>
+
+int main()
+{
+	execl("interpreter","arg1","arg2","arg3",(char*)0);
+	return 0;
+}
+12
+10b.c
+#include <stdio.h>
+#include <unistd.h>
+#include <signal.h>
+
+void callback()
+{
+	printf("Intrrupt Received !\n");
+	(void)signal(SIGINT,SIG_DFL);
+}
+int main()
+{
+	int ch,i=0;
+	printf("Enter choice\n");
+	scanf("%d",&ch);
+
+	switch(ch)
+	{
+		case 1 :	(void)signal(SIGINT,callback);
+					break;
+
+		case 2 :	(void)signal(SIGINT,SIG_IGN);
+					break;
+
+	}
+	while(1)
+	{
+		sleep(1);
+		printf("Press CTRL+C ...\n");
+		i++;
+		if(i == 10 && ch == 2)
+			(void) signal(SIGINT,SIG_DFL);
+	}
+	return 0;
+}
+13
+11a.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+void deamonize()
+{
+	pid_t pid = fork();
+
+	if(pid < 0)
+		fprintf(stderr, "Error Forking\n");
+	else if(pid)
+	{
+		printf("PID of Child %d\n",pid);
+		exit(0); // kill the parent process , child is orphanded :( and runs in the bg
+	}
+
+	umask(0);
+	if(chdir("/") < 0)
+		printf("Error changing directory \n");
+	if(setsid() < 0)  //make the child process the session leader
+		printf("Error creating session\n");
+			
+	printf("Demon Created! \n");
+
+}
+int main()
+{
+	deamonize();
+	system("ps -axj");
+	return 0;
+}
+
+14
+11b.c
+
+/*
+    compile using gcc 11b.c -lpthread
+
+    ignore warnings
+*/
+
+
+#include <stdio.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <unistd.h>
+
+#define NUM_WRITERS 3
+#define NUM_READERS 3
+
+int item_written = 0;
+int item_read = 0;
+
+sem_t semaphore_writer;
+sem_t semaphore_reader;
+sem_t semaphore_item;
+
+void writer(int count)
+{
+  sleep(1);
+  printf("Locking Writer %d \n",count);
+  sem_wait(&semaphore_writer);
+  item_written ++;
+  sem_post(&semaphore_item); // unlock item so it can be read if it was locked when no new item was available
+  if(item_written == 1)
+    sem_post(&semaphore_reader); // unlock reader locked when attempting to read NULL item
+  printf("Writing to new value %d\n",item_written);
+  printf("Writer %d unlocking semaphore\n",count);
+  sem_post(&semaphore_writer);
+}
+
+void reader(int count)
+{
+  sleep(1);
+  if(item_written == 0)
+  {
+    printf("Locking Reader %d since no item has been written yet! \n",count);
+    sem_wait(&semaphore_reader); // no item has been written yet
+  }
+  if(item_read == item_written)
+  {
+    printf("No new item available to be read . Locking resource until new entry is written !\n");
+    sem_wait(&semaphore_item); // wait for new item to be written
+  }
+  item_read++;
+  printf("Reader %d read value : %d \n",count,item_read);
+}
+
+void *begin_reader(void *arg)
+{
+  while(1)
+  {
+    reader((int) arg);
+  }
+}
+
+void *begin_writer(void *arg)
+{
+  while(1)
+  {
+    writer((int) arg);
+  }
+}
+
+int main()
+{
+  int i; //loop variable
+  // initializing readers and writers
+  pthread_t reader_th[NUM_READERS];
+  pthread_t writer_th[NUM_WRITERS];
+
+  sem_init(&semaphore_item,0,1);
+  sem_init(&semaphore_reader,0,1);
+  sem_init(&semaphore_writer,0,1);
+
+  //creating readers and writers
+  for(i=0;i<NUM_WRITERS;i++)
+    pthread_create(&writer_th[i],NULL,begin_writer,(void *)i);
+
+  for(i=0;i<NUM_READERS;i++)
+    pthread_create(&reader_th[i],NULL,begin_reader,(void *)i);
+
+  //join thread
+  for(i=0;i<NUM_READERS;i++)
+    pthread_join(reader_th[i],NULL);
+
+  for(i=0;i<NUM_WRITERS;i++)
+    pthread_join(writer_th[i],NULL);
+
+  return 0;
+}
+15
+12a.c
+#include <stdio.h>
+#include <unistd.h>
+
+void hander_1()
+{
+	printf("Exit Hander - I \n");
+}
+
+void hander_2()
+{
+	printf("Exit Hander - II \n");
+}
+
+int main()
+{
+	atexit(hander_1);
+	atexit(hander_2);
+	
+	printf("Calling Implicit exit() \n");
+	return 0;
+}
+16
+12b.c
+#include <stdio.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <string.h>
+
+#define MAX 48
+int main()
+{
+	int n;
+	char in[MAX];
+	char str_1[MAX],str_2[MAX];
+	char* out;
+
+	while(n = read(STDIN_FILENO,in,MAX))
+	{
+		in[n] = 0; //terminate string
+		sscanf(in,"%s%s",str_1,str_2);
+		out = strcat(str_1,str_2);
+		out = strcat(out,"\n");
+		n = strlen(out);
+
+		write(STDOUT_FILENO,out,n);
+
+	}
+
+	return 0;
+
+}
